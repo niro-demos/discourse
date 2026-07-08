@@ -533,8 +533,23 @@ class UploadCreator
         use_el.remove_attribute("xlink:href")
       end
 
+    doc
+      .css("style")
+      .each do |style_el|
+        style_el.content = self.class.sanitize_svg_style_content(style_el.content)
+      end
+
     File.write(@file.path, doc.to_s)
     @file.rewind
+  end
+
+  # CSS inside an uploaded SVG's <style> element is never executed as script,
+  # but `url(...)` and `@import` can still trigger the browser to fetch
+  # attacker-controlled external resources (leaking the visitor's IP, probing
+  # internal hosts, or exfiltrating data) the moment the SVG is rendered.
+  # Fragment (#foo) and data: URIs stay inline and are left untouched.
+  def self.sanitize_svg_style_content(content)
+    content.gsub(/@import\s+[^;]+;?/i, "").gsub(/url\(\s*(['"]?)(?!#)(?!data:).*?\1\s*\)/i, "url()")
   end
 
   def should_fix_orientation?

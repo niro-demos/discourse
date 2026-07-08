@@ -158,6 +158,15 @@ module Discourse
     require "middleware/default_headers"
     config.middleware.insert_before ActionDispatch::ShowExceptions, Middleware::DefaultHeaders
 
+    # Uploaded SVGs can be served straight off disk by ActionDispatch::Static
+    # (e.g. the canonical /uploads/.../original/1X/<sha>.svg path), which
+    # never reaches UploadsController and so never gets its CSP sandbox
+    # header. Unshift this middleware so it wraps the entire stack -- including
+    # ActionDispatch::Static, whether or not that middleware is even present --
+    # and can add the header to any response actually served as image/svg+xml.
+    require "middleware/svg_sandbox_headers"
+    config.middleware.unshift Middleware::SvgSandboxHeaders
+
     require "middleware/crawler_hooks"
     config.middleware.use Middleware::CrawlerHooks
 

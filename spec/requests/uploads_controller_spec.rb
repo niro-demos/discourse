@@ -447,6 +447,32 @@ RSpec.describe UploadsController do
         expect(response.status).to eq(404)
       end
     end
+
+    context "when fetching an uploaded SVG via its canonical original URL" do
+      fab!(:svg_upload) { upload_file("malicious-style.svg") }
+
+      it "sets the Content-Security-Policy sandbox header, just like the short_path route does" do
+        get svg_upload.url
+
+        expect(response.status).to eq(200)
+        # Control: the short_path route is controller-dispatched and already
+        # sets this header, proving the machinery itself works.
+        get svg_upload.short_path
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+
+        get svg_upload.url
+        expect(response.headers["Content-Security-Policy"]).to eq("sandbox;")
+      end
+
+      it "does not serve the SVG with unsanitized CSS that references external hosts" do
+        get svg_upload.url
+
+        expect(response.status).to eq(200)
+        expect(response.body).not_to include("169.254.169.254")
+        expect(response.body).not_to include("attacker.example.com")
+        expect(response.body).not_to include("@import")
+      end
+    end
   end
 
   describe "#show_short" do
