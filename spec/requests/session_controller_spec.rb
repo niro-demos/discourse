@@ -2912,6 +2912,51 @@ RSpec.describe SessionController do
         expect(json["error_type"]).to eq("rate_limit")
       end
 
+      it "cannot be bypassed by spoofing X-Forwarded-For" do
+        SiteSetting.max_logins_per_ip_per_hour = 2
+        EmailToken.confirm(email_token.token)
+
+        # Rails' ActionDispatch::RemoteIp middleware derives `request.remote_ip` from
+        # the client-supplied X-Forwarded-For header whenever one is present -- it does
+        # not require the immediate TCP connection to be a trusted proxy first (see
+        # ActionDispatch::RemoteIp::GetIp#calculate_ip). So an attacker who has been
+        # rate limited on their real (REMOTE_ADDR) connection can bypass it entirely
+        # just by sending a fresh, never-before-seen X-Forwarded-For value.
+        real_ip = "203.0.113.10"
+
+        2.times do
+          post "/session.json",
+               params: {
+                 login: user.username,
+                 password: "myawesomepassword",
+               },
+               env: {
+                 "REMOTE_ADDR" => real_ip,
+               }
+
+          expect(response.status).to eq(200)
+          expect(response.parsed_body["error"]).not_to be_present
+        end
+
+        # Same real connecting address, which has now hit the limit, but the
+        # attacker rotates a fresh, spoofed X-Forwarded-For value. The real
+        # per-IP limit must still apply -- it must not hand out a fresh
+        # rate-limit bucket just because the client claims a new IP.
+        post "/session.json",
+             params: {
+               login: user.username,
+               password: "myawesomepassword",
+             },
+             env: {
+               "REMOTE_ADDR" => real_ip,
+               "HTTP_X_FORWARDED_FOR" => "198.51.100.#{SecureRandom.random_number(254)}",
+             }
+
+        expect(response.status).to eq(429)
+        json = response.parsed_body
+        expect(json["error_type"]).to eq("rate_limit")
+      end
+
       it "rate limits second factor attempts by IP" do
         6.times do |x|
           post "/session.json",

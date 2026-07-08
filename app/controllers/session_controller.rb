@@ -680,8 +680,8 @@ class SessionController < ApplicationController
       return render_json_error(I18n.t("login.reset_not_allowed_from_ip_address"))
     end
 
-    RateLimiter.new(nil, "forgot-password-hr-#{request.remote_ip}", 6, 1.hour).performed!
-    RateLimiter.new(nil, "forgot-password-min-#{request.remote_ip}", 3, 1.minute).performed!
+    RateLimiter.new(nil, "forgot-password-hr-#{login_rate_limit_ip}", 6, 1.hour).performed!
+    RateLimiter.new(nil, "forgot-password-min-#{login_rate_limit_ip}", 3, 1.minute).performed!
 
     user =
       if SiteSetting.hide_email_address_taken && !current_user&.staff?
@@ -860,8 +860,8 @@ class SessionController < ApplicationController
   end
 
   def rate_limit_login_code_request
-    RateLimiter.new(nil, "login-code-hour-#{request.remote_ip}", 6, 1.hour).performed!
-    RateLimiter.new(nil, "login-code-min-#{request.remote_ip}", 3, 1.minute).performed!
+    RateLimiter.new(nil, "login-code-hour-#{login_rate_limit_ip}", 6, 1.hour).performed!
+    RateLimiter.new(nil, "login-code-min-#{login_rate_limit_ip}", 3, 1.minute).performed!
 
     email = params[:email].to_s.strip.downcase
     if email.present?
@@ -875,8 +875,24 @@ class SessionController < ApplicationController
   end
 
   def rate_limit_login_code_verify
-    RateLimiter.new(nil, "login-code-verify-hour-#{request.remote_ip}", 30, 1.hour).performed!
-    RateLimiter.new(nil, "login-code-verify-min-#{request.remote_ip}", 6, 1.minute).performed!
+    RateLimiter.new(nil, "login-code-verify-hour-#{login_rate_limit_ip}", 30, 1.hour).performed!
+    RateLimiter.new(nil, "login-code-verify-min-#{login_rate_limit_ip}", 6, 1.minute).performed!
+  end
+
+  # `request.remote_ip` is resolved by Rails' ActionDispatch::RemoteIp middleware from
+  # client-controlled headers (X-Forwarded-For / Client-Ip). That middleware only strips
+  # *known proxy* hops out of those headers -- it does not require the immediate TCP
+  # connection to come from a trusted proxy before honoring them (see
+  # ActionDispatch::RemoteIp::GetIp#calculate_ip), so any request that includes an
+  # X-Forwarded-For header at all gets to pick its own "IP" for the purposes of
+  # `request.remote_ip`, regardless of `config.action_dispatch.trusted_proxies`. Keying
+  # per-IP login rate limits on it lets an attacker who has been rate limited simply
+  # rotate the header to get a fresh limiter bucket on every request.
+  #
+  # `REMOTE_ADDR` is set by the web server from the actual TCP peer address and cannot be
+  # influenced by request headers, so we use it instead for these counters.
+  def login_rate_limit_ip
+    request.env["REMOTE_ADDR"]
   end
 
   def login_code_honeypot_fails?
@@ -1042,14 +1058,14 @@ class SessionController < ApplicationController
   def rate_limit_login
     RateLimiter.new(
       nil,
-      "login-hr-#{request.remote_ip}",
+      "login-hr-#{login_rate_limit_ip}",
       SiteSetting.max_logins_per_ip_per_hour,
       1.hour,
     ).performed!
 
     RateLimiter.new(
       nil,
-      "login-min-#{request.remote_ip}",
+      "login-min-#{login_rate_limit_ip}",
       SiteSetting.max_logins_per_ip_per_minute,
       1.minute,
     ).performed!
